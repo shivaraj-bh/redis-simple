@@ -20,14 +20,17 @@
     },
     "haskell-flake": {
       "locked": {
-        "lastModified": 1687490133,
-        "narHash": "sha256-KOFPiKi/kthtNSh90KqeN1+0wWfl6vVTLX2lOkE0rK0=",
-        "path": "/Users/shivaraj/personal/haskell-flake",
-        "type": "path"
+        "lastModified": 1687547380,
+        "narHash": "sha256-AHetxX1xCf87UcyExP3oJF5MDD7uVTsKD0SPGr9KEo8=",
+        "owner": "srid",
+        "repo": "haskell-flake",
+        "rev": "57cd5068787de5571cc6dd60431a0fa255d12a1f",
+        "type": "github"
       },
       "original": {
-        "path": "/Users/shivaraj/personal/haskell-flake",
-        "type": "path"
+        "owner": "srid",
+        "repo": "haskell-flake",
+        "type": "github"
       }
     },
     "nixpkgs": {
