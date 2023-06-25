@@ -1,0 +1,34 @@
+cabal-version:      3.0
+name:               redis-simple
+version:            0.1.0.0
+author:             shivaraj-bh
+maintainer:         sbh69840@gmail.com
+extra-source-files: CHANGELOG.md
+
+library
+  exposed-modules:  Database.Redis
+  other-modules:    Database.Redis.Connection
+  build-depends:
+    , base
+    , bytestring
+    , network
+    , network-uri
+    , resource-pool
+
+  hs-source-dirs:   src
+  default-language: Haskell2010
+
+executable redis-batching-bench
+  main-is:          Main.hs
+  build-depends:
+    , async
+    , base
+    , bytestring
+    , redis-simple
+    , resource-pool
+    , stm
+    , time
+
+  hs-source-dirs:   app
+  ghc-options:      -Wall -O2 -rtsopts
+  default-language: Haskell2010
