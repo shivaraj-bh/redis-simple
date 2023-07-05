@@ -1,4 +1,9 @@
-# WIP: redis-simple
+# redis-simple
+
+> **Note**
+>
+> 🚧 Work in Progress
+
 This haskell project packages the following:
 - **redis-simple** (A library to send raw commands to redis over sockets)
 - **redis-batching-bench** (An executable to benchmark **redis-simple** with batching[^batching])
