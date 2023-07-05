@@ -22,7 +22,7 @@ import Control.Concurrent (forkIO, newEmptyMVar, putMVar, takeMVar, MVar)
 import System.CPUTime (getCPUTime)
 import Data.List.Split (chunksOf)
 
-type RedisQuery = ByteString
+type RedisQuery = [ ByteString ]
 
 data QueryBuffer where
   QueryBuffer ::
@@ -70,7 +70,7 @@ main = do
   _ <- async consumerAction
 
   -- Run the benchmarks
-  let !query = "SET key val\r\n"
+  let !query = [ "SET", "key", "val" ]
   putStrLn "CPU time (with batching)"
   benchmark (requests myConfig * clients myConfig) $ bufferTest done queryBuffer query
   putStrLn "CPU time (without batching)"
@@ -82,7 +82,7 @@ main = do
     , requests = 2
     , bufferSize = 10
     }
-  bufferTest :: MVar () -> QueryBuffer -> ByteString -> IO ()
+  bufferTest :: MVar () -> QueryBuffer -> RedisQuery -> IO ()
   bufferTest done queryBuffer query = do
     replicateM_ (clients myConfig) $ forkIO $ do
       resultVars <- replicateM (requests myConfig) $ bufferRedisQuery queryBuffer query
@@ -90,7 +90,7 @@ main = do
       _ <- atomically $ mapM takeTMVar resultVars
       putMVar done ()
     replicateM_ (clients myConfig) $ takeMVar done
-  withoutBufferTest :: MVar () -> Pool Handle -> ByteString -> IO ()
+  withoutBufferTest :: MVar () -> Pool Handle -> RedisQuery -> IO ()
   withoutBufferTest done conn query = do
     replicateM_ (clients myConfig) $ forkIO $ do
       replicateM_ (requests myConfig) $ runRedis conn [ query ]

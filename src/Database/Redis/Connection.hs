@@ -6,15 +6,15 @@ import Control.Exception (Exception, throwIO)
 import Control.Monad (foldM)
 import qualified Data.ByteString as BS
 import qualified Data.Pool as Pool
-import Database.Redis.Protocol (Reply, reply)
+import Database.Redis.Protocol (Reply, reply, renderRequest)
 import qualified Network.Socket as Socket
 import qualified Scanner
 import qualified System.IO as IO
 
-sendRecv :: IO.Handle -> [BS.ByteString] -> IO [Reply]
+sendRecv :: IO.Handle -> [[BS.ByteString]] -> IO [Reply]
 sendRecv handle commands = do
   -- Send commands to Redis
-  BS.hPut handle (BS.concat commands)
+  BS.hPut handle (BS.concat (map renderRequest commands))
   -- Read the response and parse
   resp <- BS.hGetSome handle 4096
   parseReplies resp
@@ -43,16 +43,18 @@ defaultConnectInfo = ConnInfo
   }
 
 parseReplies :: BS.ByteString -> IO [Reply]
-parseReplies input = do
-  (_, replies) <- foldM scanStep (input, []) [1 ..]
-  return (reverse replies)
+parseReplies = go
   where
-    scanStep (acc, replies) _ = do
-      let scanResult = Scanner.scan reply acc
-      case scanResult of
-        Scanner.Fail {} -> errConnClosed
-        Scanner.More {} -> return (acc, replies)
-        Scanner.Done rest' r -> return (rest', r : replies)
+    go "" = return []
+    go rest = do
+      (r, rest') <- do
+        let scanResult = Scanner.scan reply rest
+        case scanResult of
+          Scanner.Fail {} -> errConnClosed
+          Scanner.More {} -> error "redis-simple: received partial reply from redis server"
+          Scanner.Done rest' r -> return (r, rest')
+      rs <- go rest'
+      return (r : rs)
 
 createConnection :: [Socket.AddrInfo] -> IO IO.Handle
 createConnection addrInfos = do
@@ -79,6 +81,6 @@ poolConfig ConnInfo{..} = Pool.defaultPoolConfig (createResource connectHost con
 connect :: ConnectInfo -> IO (Pool.Pool IO.Handle)
 connect = Pool.newPool . poolConfig
 
-runRedis :: Pool.Pool IO.Handle -> [BS.ByteString] -> IO [Reply]
+runRedis :: Pool.Pool IO.Handle -> [[BS.ByteString]] -> IO [Reply]
 runRedis pool commands = Pool.withResource pool $ \handle -> sendRecv handle commands
 
