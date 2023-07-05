@@ -1,4 +1,6 @@
-{-# LANGUAGE GADTs, OverloadedStrings #-}
+{-# LANGUAGE GADTs, OverloadedStrings, BangPatterns #-}
+-- queryQueue is unused and I am not comfortable seeing that warning.
+{-# OPTIONS_GHC -Wno-unused-top-binds #-}
 import Control.Concurrent.Async ( async )
 import Control.Concurrent.STM
     ( atomically,
@@ -10,15 +12,15 @@ import Control.Concurrent.STM
       writeTQueue,
       TMVar,
       TQueue )
-import Control.Monad ( forever, replicateM, replicateM_ )
+import Control.Monad ( forever, replicateM, replicateM_, forM_, forM )
 import Data.Foldable (traverse_)
-import Database.Redis (connect, runRedis)
+import Database.Redis (connect, runRedis, defaultConnectInfo)
 import Data.Pool (Pool)
 import System.IO (Handle)
 import Data.ByteString (ByteString)
 import Control.Concurrent (forkIO, newEmptyMVar, putMVar, takeMVar, MVar)
-import Data.Time (diffUTCTime, getCurrentTime)
 import System.CPUTime (getCPUTime)
+import Data.List.Split (chunksOf)
 
 type RedisQuery = ByteString
 
@@ -59,7 +61,7 @@ data Config = Config
 main :: IO ()
 main = do
   -- connection pool
-  conn <- connect
+  conn <- connect defaultConnectInfo 
   -- MVar to synchronize the client threads
   done <- newEmptyMVar
   -- Start the consumer thread
@@ -68,44 +70,49 @@ main = do
   _ <- async consumerAction
 
   -- Run the benchmarks
-  deltaT "Wall-clock time (with batching)" $ 
-    deltaCPUT "CPU time (with batching)" $ 
-      bufferTest done queryBuffer
-  deltaT "Wall-clock time (without batching)" $ 
-    deltaCPUT "CPU time (without batching)" $ 
-      withoutBufferTest done conn
+  let !query = "SET key val\r\n"
+  putStrLn "CPU time (with batching)"
+  benchmark (requests myConfig * clients myConfig) $ bufferTest done queryBuffer query
+  putStrLn "CPU time (without batching)"
+  benchmark (requests myConfig * clients myConfig) $ withoutBufferTest done conn query
   where
   myConfig :: Config
   myConfig = Config
-    { clients = 500
-    , requests = 200
+    { clients = 5
+    , requests = 2
     , bufferSize = 10
     }
-  deltaT :: String -> IO () -> IO ()
-  deltaT msg action = do
-    start <- getCurrentTime
-    action
-    end <- getCurrentTime
-    let diff = realToFrac (diffUTCTime end start) * 1000 :: Double
-    putStrLn $ msg ++ ": " ++ show diff ++ " ms"
-  deltaCPUT :: String -> IO () -> IO ()
-  deltaCPUT msg action = do
-    start <- getCPUTime
-    action
-    end <- getCPUTime
-    let diff = fromIntegral (end - start) / (10^(9 :: Int)) :: Double
-    putStrLn $ msg ++ ": " ++ show diff ++ " ms"
-  bufferTest :: MVar () -> QueryBuffer -> IO ()
-  bufferTest done queryBuffer = do
+  bufferTest :: MVar () -> QueryBuffer -> ByteString -> IO ()
+  bufferTest done queryBuffer query = do
     replicateM_ (clients myConfig) $ forkIO $ do
-      resultVars <- replicateM (requests myConfig) $ bufferRedisQuery queryBuffer "SET key val\r\n"
+      resultVars <- replicateM (requests myConfig) $ bufferRedisQuery queryBuffer query
       -- let's not worry about printing the results for now
       _ <- atomically $ mapM takeTMVar resultVars
       putMVar done ()
     replicateM_ (clients myConfig) $ takeMVar done
-  withoutBufferTest :: MVar () -> Pool Handle -> IO ()
-  withoutBufferTest done conn = do
+  withoutBufferTest :: MVar () -> Pool Handle -> ByteString -> IO ()
+  withoutBufferTest done conn query = do
     replicateM_ (clients myConfig) $ forkIO $ do
-      replicateM_ (requests myConfig) $ runRedis conn [ "SET key val\r\n" ]
+      replicateM_ (requests myConfig) $ runRedis conn [ query ]
       putMVar done ()
     replicateM_ (clients myConfig) $ takeMVar done
+  benchmark :: Int -> IO a -> IO ()
+  benchmark requestsPerBatch action = do
+    let itrs = 1000
+    let batchSize = 100
+    let batches = chunksOf batchSize [1::Int .. itrs]
+    let warmupRuns = 5
+
+    -- Warm-up
+    replicateM_ warmupRuns $ forM_ [1..batchSize] $ const action
+
+    -- Actual runs 
+    batchTimes <- forM batches $ \batch -> do
+      tick <- getCPUTime
+      forM_ batch $ const action
+      tock <- getCPUTime
+      let timeInUs = fromIntegral (tock - tick) / 1000000 :: Double
+      return timeInUs
+
+    let avgTime = sum batchTimes / fromIntegral (length batchTimes)
+    print $ "Average time per call: " ++ show (avgTime / fromIntegral (batchSize * requestsPerBatch)) ++ " us"
