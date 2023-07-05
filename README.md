@@ -17,6 +17,6 @@ nix develop
 ```
 ## Benchmark configuration
 You can play around with the following knobs in the `app/Main.hs` file:
-- **clients** (Number of clients to spawn, `default: 500`)
-- **requests** (Number of requests to send per client, `default: 200`)
+- **clients** (Number of clients to spawn, `default: 5`)
+- **requests** (Number of requests to send per client, `default: 2`)
 - **bufferSize** (Size of the buffer to use for batching, `default:10`)
