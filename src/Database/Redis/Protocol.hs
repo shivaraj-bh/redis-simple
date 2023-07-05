@@ -1,3 +1,4 @@
+-- Based on https://github.com/informatikr/hedis/blob/master/src/Database/Redis/Protocol.hs
 {-# LANGUAGE CPP #-}
 {-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE OverloadedStrings #-}
