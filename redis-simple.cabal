@@ -7,15 +7,20 @@ extra-source-files: CHANGELOG.md
 
 library
   exposed-modules:  Database.Redis
-  other-modules:    Database.Redis.Connection
+  other-modules:
+    , Database.Redis.Connection
+    , Database.Redis.Protocol
   build-depends:
     , base
     , bytestring
     , network
     , network-uri
     , resource-pool
-  ghc-options: -Wall
+    , deepseq
+    , scanner
+    , text
 
+  ghc-options: -Wall
   hs-source-dirs:   src
   default-language: Haskell2010
 
@@ -29,6 +34,7 @@ executable redis-batching-bench
     , resource-pool
     , stm
     , time
+    , random
     , split
 
   hs-source-dirs:   app

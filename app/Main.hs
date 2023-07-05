@@ -14,7 +14,7 @@ import Control.Concurrent.STM
       TQueue )
 import Control.Monad ( forever, replicateM, replicateM_, forM_, forM )
 import Data.Foldable (traverse_)
-import Database.Redis (connect, runRedis, defaultConnectInfo)
+import Database.Redis (connect, runRedis, defaultConnectInfo, Reply)
 import Data.Pool (Pool)
 import System.IO (Handle)
 import Data.ByteString (ByteString)
@@ -26,12 +26,12 @@ type RedisQuery = ByteString
 
 data QueryBuffer where
   QueryBuffer ::
-    { queryQueue :: TQueue ( RedisQuery, TMVar ByteString ) } -> QueryBuffer
+    { queryQueue :: TQueue ( RedisQuery, TMVar Reply ) } -> QueryBuffer
 
 newQueryBuffer :: IO QueryBuffer
 newQueryBuffer = QueryBuffer <$> newTQueueIO
 
-bufferRedisQuery :: QueryBuffer -> RedisQuery -> IO (TMVar ByteString)
+bufferRedisQuery :: QueryBuffer -> RedisQuery -> IO (TMVar Reply)
 bufferRedisQuery (QueryBuffer queue) query = do
   resultVar <- newEmptyTMVarIO
   atomically $ writeTQueue queue (query, resultVar)
@@ -39,12 +39,12 @@ bufferRedisQuery (QueryBuffer queue) query = do
 
 runConsumer :: Pool Handle -> QueryBuffer -> Int -> IO ()
 runConsumer conn (QueryBuffer queue) batchSize =
-  let consumeQueryBatch :: [(RedisQuery, TMVar ByteString)] -> IO ()
+  let consumeQueryBatch :: [(RedisQuery, TMVar Reply)] -> IO ()
       consumeQueryBatch queryBatch = do
         results <- runRedis conn (map fst queryBatch)
         traverse_ (uncurry handleResult) (zip queryBatch results)
 
-      handleResult :: (RedisQuery, TMVar ByteString) -> ByteString -> IO ()
+      handleResult :: (RedisQuery, TMVar Reply) -> Reply -> IO ()
       handleResult (_, resultVar) reply =
         atomically $ putTMVar resultVar reply
 
