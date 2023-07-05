@@ -1,13 +1,28 @@
 {-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE RecordWildCards #-}
 module Database.Redis.Connection where
 
 import qualified Data.ByteString as BS
 import qualified Network.Socket as Socket
-import qualified Network.Socket.ByteString as NSB
 import qualified Data.Pool as Pool
 import qualified System.IO as IO
-import Data.Char (ord)
 import Data.List (unfoldr)
+
+data ConnectInfo = ConnInfo
+  {
+    connectHost :: Socket.HostName
+  , connectPort :: Socket.PortNumber
+  , connectMaxConnections :: Int
+  , connectMaxIdleTime :: Double
+  }
+defaultConnectInfo :: ConnectInfo
+defaultConnectInfo = ConnInfo
+  {
+    connectHost = "localhost"
+  , connectPort = 6379
+  , connectMaxConnections = 50
+  , connectMaxIdleTime = 30
+  }
 
 splitOnCRLF :: BS.ByteString -> [BS.ByteString]
 splitOnCRLF = unfoldr f
@@ -33,17 +48,21 @@ createConnection addrInfos = do
 destroyConnection :: IO.Handle -> IO ()
 destroyConnection = IO.hClose
 
-createResource :: IO IO.Handle
-createResource   = do
-  addrInfo <-  Socket.getAddrInfo Nothing (Just "localhost") (Just "6379")
+createResource :: Socket.HostName -> Socket.PortNumber -> IO IO.Handle
+createResource hostname port = do
+  addrInfo <-  Socket.getAddrInfo (Just hints) (Just hostname) (Just $ show port)
   createConnection addrInfo
+  where
+    hints = Socket.defaultHints
+      { Socket.addrSocketType = Socket.Stream }
 
-poolConfig :: Pool.PoolConfig IO.Handle
-poolConfig = Pool.defaultPoolConfig createResource destroyConnection 1 500
+poolConfig :: ConnectInfo -> Pool.PoolConfig IO.Handle
+poolConfig ConnInfo{..} = Pool.defaultPoolConfig (createResource connectHost connectPort) destroyConnection connectMaxIdleTime connectMaxConnections
 
 -- Abstract out pool creation 
-connect :: IO (Pool.Pool IO.Handle)
-connect = Pool.newPool poolConfig
+connect :: ConnectInfo -> IO (Pool.Pool IO.Handle)
+connect = Pool.newPool . poolConfig
 
 runRedis :: Pool.Pool IO.Handle -> [ BS.ByteString ] -> IO [ BS.ByteString ]
 runRedis pool commands = Pool.withResource pool $ \handle -> sendCommands handle commands
+

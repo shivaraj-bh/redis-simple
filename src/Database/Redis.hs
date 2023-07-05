@@ -1,5 +1,6 @@
 module Database.Redis (
   runRedis,
-  connect
+  connect,
+  defaultConnectInfo
 ) where
-import Database.Redis.Connection ( runRedis, connect )
+import Database.Redis.Connection ( runRedis, connect, defaultConnectInfo )
