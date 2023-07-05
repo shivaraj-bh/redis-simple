@@ -14,7 +14,7 @@ import Control.Concurrent.STM
       TQueue )
 import Control.Monad ( forever, replicateM, replicateM_, forM_, forM )
 import Data.Foldable (traverse_)
-import Database.Redis (connect, runRedis, defaultConnectInfo)
+import Database.Redis (connect, runRedis, defaultConnectInfo, Reply)
 import Data.Pool (Pool)
 import System.IO (Handle)
 import Data.ByteString (ByteString)
@@ -22,16 +22,16 @@ import Control.Concurrent (forkIO, newEmptyMVar, putMVar, takeMVar, MVar)
 import System.CPUTime (getCPUTime)
 import Data.List.Split (chunksOf)
 
-type RedisQuery = ByteString
+type RedisQuery = [ ByteString ]
 
 data QueryBuffer where
   QueryBuffer ::
-    { queryQueue :: TQueue ( RedisQuery, TMVar ByteString ) } -> QueryBuffer
+    { queryQueue :: TQueue ( RedisQuery, TMVar Reply ) } -> QueryBuffer
 
 newQueryBuffer :: IO QueryBuffer
 newQueryBuffer = QueryBuffer <$> newTQueueIO
 
-bufferRedisQuery :: QueryBuffer -> RedisQuery -> IO (TMVar ByteString)
+bufferRedisQuery :: QueryBuffer -> RedisQuery -> IO (TMVar Reply)
 bufferRedisQuery (QueryBuffer queue) query = do
   resultVar <- newEmptyTMVarIO
   atomically $ writeTQueue queue (query, resultVar)
@@ -39,12 +39,12 @@ bufferRedisQuery (QueryBuffer queue) query = do
 
 runConsumer :: Pool Handle -> QueryBuffer -> Int -> IO ()
 runConsumer conn (QueryBuffer queue) batchSize =
-  let consumeQueryBatch :: [(RedisQuery, TMVar ByteString)] -> IO ()
+  let consumeQueryBatch :: [(RedisQuery, TMVar Reply)] -> IO ()
       consumeQueryBatch queryBatch = do
         results <- runRedis conn (map fst queryBatch)
         traverse_ (uncurry handleResult) (zip queryBatch results)
 
-      handleResult :: (RedisQuery, TMVar ByteString) -> ByteString -> IO ()
+      handleResult :: (RedisQuery, TMVar Reply) -> Reply -> IO ()
       handleResult (_, resultVar) reply =
         atomically $ putTMVar resultVar reply
 
@@ -70,7 +70,7 @@ main = do
   _ <- async consumerAction
 
   -- Run the benchmarks
-  let !query = "SET key val\r\n"
+  let !query = [ "SET", "key", "val" ]
   putStrLn "CPU time (with batching)"
   benchmark (requests myConfig * clients myConfig) $ bufferTest done queryBuffer query
   putStrLn "CPU time (without batching)"
@@ -82,7 +82,7 @@ main = do
     , requests = 2
     , bufferSize = 10
     }
-  bufferTest :: MVar () -> QueryBuffer -> ByteString -> IO ()
+  bufferTest :: MVar () -> QueryBuffer -> RedisQuery -> IO ()
   bufferTest done queryBuffer query = do
     replicateM_ (clients myConfig) $ forkIO $ do
       resultVars <- replicateM (requests myConfig) $ bufferRedisQuery queryBuffer query
@@ -90,7 +90,7 @@ main = do
       _ <- atomically $ mapM takeTMVar resultVars
       putMVar done ()
     replicateM_ (clients myConfig) $ takeMVar done
-  withoutBufferTest :: MVar () -> Pool Handle -> ByteString -> IO ()
+  withoutBufferTest :: MVar () -> Pool Handle -> RedisQuery -> IO ()
   withoutBufferTest done conn query = do
     replicateM_ (clients myConfig) $ forkIO $ do
       replicateM_ (requests myConfig) $ runRedis conn [ query ]

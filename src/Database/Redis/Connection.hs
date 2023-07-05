@@ -2,11 +2,29 @@
 {-# LANGUAGE RecordWildCards #-}
 module Database.Redis.Connection where
 
+import Control.Exception (Exception, throwIO)
+import Control.Monad (foldM)
 import qualified Data.ByteString as BS
-import qualified Network.Socket as Socket
 import qualified Data.Pool as Pool
+import Database.Redis.Protocol (Reply, reply, renderRequest)
+import qualified Network.Socket as Socket
+import qualified Scanner
 import qualified System.IO as IO
-import Data.List (unfoldr)
+
+sendRecv :: IO.Handle -> [[BS.ByteString]] -> IO [Reply]
+sendRecv handle commands = do
+  -- Send commands to Redis
+  BS.hPut handle (BS.concat (map renderRequest commands))
+  -- Read the response and parse
+  resp <- BS.hGetSome handle 4096
+  parseReplies resp
+
+data ConnectionLostException = ConnectionLost deriving (Show)
+
+instance Exception ConnectionLostException
+
+errConnClosed :: IO a
+errConnClosed = throwIO ConnectionLost
 
 data ConnectInfo = ConnInfo
   {
@@ -24,21 +42,21 @@ defaultConnectInfo = ConnInfo
   , connectMaxIdleTime = 30
   }
 
-splitOnCRLF :: BS.ByteString -> [BS.ByteString]
-splitOnCRLF = unfoldr f
+parseReplies :: BS.ByteString -> IO [Reply]
+parseReplies = go
   where
-    f bs' = case BS.breakSubstring "\r\n" bs' of
-      (x, y) | BS.null y -> if BS.null x then Nothing else Just (x, BS.empty)
-             | otherwise -> Just (x, BS.drop 2 y)
+    go "" = return []
+    go rest = do
+      (r, rest') <- do
+        let scanResult = Scanner.scan reply rest
+        case scanResult of
+          Scanner.Fail {} -> errConnClosed
+          Scanner.More {} -> error "redis-simple: received partial reply from redis server"
+          Scanner.Done rest' r -> return (r, rest')
+      rs <- go rest'
+      return (r : rs)
 
-sendCommands :: IO.Handle -> [ BS.ByteString ] -> IO [ BS.ByteString ]
-sendCommands handle commands =
-    -- Send commands to Redis
-    BS.hPut handle (BS.concat commands)
-    -- Read the response and split
-    >> splitOnCRLF <$> BS.hGetSome handle 4096
-
-createConnection ::[Socket.AddrInfo] -> IO IO.Handle
+createConnection :: [Socket.AddrInfo] -> IO IO.Handle
 createConnection addrInfos = do
   s <- Socket.socket (Socket.addrFamily (head addrInfos)) Socket.Stream Socket.defaultProtocol
   Socket.connect s (Socket.addrAddress (head addrInfos))
@@ -63,6 +81,6 @@ poolConfig ConnInfo{..} = Pool.defaultPoolConfig (createResource connectHost con
 connect :: ConnectInfo -> IO (Pool.Pool IO.Handle)
 connect = Pool.newPool . poolConfig
 
-runRedis :: Pool.Pool IO.Handle -> [ BS.ByteString ] -> IO [ BS.ByteString ]
-runRedis pool commands = Pool.withResource pool $ \handle -> sendCommands handle commands
+runRedis :: Pool.Pool IO.Handle -> [[BS.ByteString]] -> IO [Reply]
+runRedis pool commands = Pool.withResource pool $ \handle -> sendRecv handle commands
 
