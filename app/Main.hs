@@ -14,7 +14,7 @@ import Control.Concurrent.STM
       TQueue )
 import Control.Monad ( forever, replicateM, replicateM_, forM_, forM )
 import Data.Foldable (traverse_)
-import Database.Redis (connect, runRedis, defaultConnectInfo, Reply)
+import Database.Redis (connect, runRedis, defaultConnectInfo, Reply, Connection)
 import Data.Pool (Pool)
 import System.IO (Handle)
 import Data.ByteString (ByteString)
@@ -37,7 +37,7 @@ bufferRedisQuery (QueryBuffer queue) query = do
   atomically $ writeTQueue queue (query, resultVar)
   return resultVar
 
-runConsumer :: Pool Handle -> QueryBuffer -> Int -> IO ()
+runConsumer :: Connection -> QueryBuffer -> Int -> IO ()
 runConsumer conn (QueryBuffer queue) batchSize =
   let consumeQueryBatch :: [(RedisQuery, TMVar Reply)] -> IO ()
       consumeQueryBatch queryBatch = do
@@ -90,7 +90,7 @@ main = do
       _ <- atomically $ mapM takeTMVar resultVars
       putMVar done ()
     replicateM_ (clients myConfig) $ takeMVar done
-  withoutBufferTest :: MVar () -> Pool Handle -> RedisQuery -> IO ()
+  withoutBufferTest :: MVar () -> Connection -> RedisQuery -> IO ()
   withoutBufferTest done conn query = do
     replicateM_ (clients myConfig) $ forkIO $ do
       replicateM_ (requests myConfig) $ runRedis conn [ query ]

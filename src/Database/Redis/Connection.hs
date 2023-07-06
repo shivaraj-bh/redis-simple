@@ -3,13 +3,44 @@
 module Database.Redis.Connection where
 
 import Control.Exception (Exception, throwIO)
-import Control.Monad (foldM)
 import qualified Data.ByteString as BS
 import qualified Data.Pool as Pool
-import Database.Redis.Protocol (Reply, reply, renderRequest)
+import Database.Redis.Protocol (Reply (MultiBulk, Integer, Bulk), reply, renderRequest)
 import qualified Network.Socket as Socket
 import qualified Scanner
 import qualified System.IO as IO
+import Control.Concurrent (MVar, newMVar)
+import qualified Data.ByteString.Char8 as Char8
+
+data ClusteredNode conn = Node
+  { nodeConns :: Pool.Pool conn
+    -- ^ Pool of connections to this node
+  , nodeInfo :: MVar (Int, Int, Socket.HostName, Socket.PortNumber)
+    -- ^ (Slot start, Slot end, Hostname, Port)
+  }
+
+data MasterNode conn = MasterNode (ClusteredNode conn) [SlaveNode conn]
+
+newtype SlaveNode conn = SlaveNode (ClusteredNode conn)
+
+data ConnectionPool conn
+  = Clustered [MasterNode conn]
+  | NonClustered (Pool.Pool conn)
+
+newtype Connection = Connection (ConnectionPool IO.Handle)
+
+data ConnectionLostException = ConnectionLost deriving (Show)
+
+instance Exception ConnectionLostException
+
+data ConnectInfo = ConnInfo
+  {
+    connectHost :: Socket.HostName
+  , connectPort :: Socket.PortNumber
+  , connectMaxConnections :: Int
+  , connectMaxIdleTime :: Double
+  , cluster :: Bool
+  }
 
 sendRecv :: IO.Handle -> [[BS.ByteString]] -> IO [Reply]
 sendRecv handle commands = do
@@ -19,20 +50,10 @@ sendRecv handle commands = do
   resp <- BS.hGetSome handle 4096
   parseReplies resp
 
-data ConnectionLostException = ConnectionLost deriving (Show)
-
-instance Exception ConnectionLostException
 
 errConnClosed :: IO a
 errConnClosed = throwIO ConnectionLost
 
-data ConnectInfo = ConnInfo
-  {
-    connectHost :: Socket.HostName
-  , connectPort :: Socket.PortNumber
-  , connectMaxConnections :: Int
-  , connectMaxIdleTime :: Double
-  }
 defaultConnectInfo :: ConnectInfo
 defaultConnectInfo = ConnInfo
   {
@@ -40,6 +61,7 @@ defaultConnectInfo = ConnInfo
   , connectPort = 6379
   , connectMaxConnections = 50
   , connectMaxIdleTime = 30
+  , cluster = False
   }
 
 parseReplies :: BS.ByteString -> IO [Reply]
@@ -78,9 +100,42 @@ poolConfig :: ConnectInfo -> Pool.PoolConfig IO.Handle
 poolConfig ConnInfo{..} = Pool.defaultPoolConfig (createResource connectHost connectPort) destroyConnection connectMaxIdleTime connectMaxConnections
 
 -- Abstract out pool creation 
-connect :: ConnectInfo -> IO (Pool.Pool IO.Handle)
-connect = Pool.newPool . poolConfig
+connect :: ConnectInfo -> IO Connection
+connect connectInfo =
+  if cluster connectInfo then do
+    conn <- createResource (connectHost connectInfo) (connectPort connectInfo)
+    clusterSlots <- sendRecv conn [["CLUSTER", "SLOTS"]]
+    print clusterSlots
+    destroyConnection conn
+    parseClusterSlots (head clusterSlots)
+  else
+    Connection . NonClustered <$> Pool.newPool (poolConfig connectInfo)
 
-runRedis :: Pool.Pool IO.Handle -> [[BS.ByteString]] -> IO [Reply]
-runRedis pool commands = Pool.withResource pool $ \handle -> sendRecv handle commands
+parseClusterSlots :: Reply -> IO Connection
+parseClusterSlots (MultiBulk (Just bulkData)) = do
+  nodes <- mapM parseNodes bulkData
+  return $ Connection (Clustered nodes)
+parseClusterSlots _ = error "redis-simple: received invalid reply from redis server"
+
+parseNodes :: Reply -> IO (MasterNode IO.Handle)
+parseNodes (MultiBulk (Just ((Integer startSlot):(Integer endSlot):masterData:replicas)))= do
+  master <- createNode (fromIntegral startSlot) (fromIntegral endSlot) masterData
+  slaves <- mapM (createNode 0 0) replicas
+  return $ MasterNode master (map SlaveNode slaves)
+parseNodes _ = error "redis-simple: received invalid reply from redis server"
+
+createNode :: Int -> Int -> Reply -> IO (ClusteredNode IO.Handle)
+createNode startSlot endSlot (MultiBulk (Just ((Bulk (Just host)):(Integer port):_:_))) = do
+  pool <- Pool.newPool (poolConfig defaultConnectInfo { connectHost = Char8.unpack host, connectPort = fromIntegral port })
+  nodeInfo <- newMVar (startSlot, endSlot, Char8.unpack host, fromIntegral port :: Socket.PortNumber)
+  return $ Node pool nodeInfo
+createNode _ _ _ = error "redis-simple: received invalid reply from redis server"
+
+runRedis :: Connection -> [[BS.ByteString]] -> IO [Reply]
+runRedis conn commands =
+  case conn of
+    Connection (NonClustered pool) ->
+      Pool.withResource pool $ \handle -> sendRecv handle commands
+    Connection (Clustered _) ->
+      undefined
 
