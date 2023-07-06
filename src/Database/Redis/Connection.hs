@@ -9,8 +9,10 @@ import Database.Redis.Protocol (Reply (MultiBulk, Integer, Bulk), reply, renderR
 import qualified Network.Socket as Socket
 import qualified Scanner
 import qualified System.IO as IO
-import Control.Concurrent (MVar, newMVar)
+import Control.Concurrent (MVar, newMVar, readMVar)
 import qualified Data.ByteString.Char8 as Char8
+import Database.Redis.HashSlot (keyToSlot)
+import Control.Monad (filterM)
 
 data ClusteredNode conn = Node
   { nodeConns :: Pool.Pool conn
@@ -105,7 +107,6 @@ connect connectInfo =
   if cluster connectInfo then do
     conn <- createResource (connectHost connectInfo) (connectPort connectInfo)
     clusterSlots <- sendRecv conn [["CLUSTER", "SLOTS"]]
-    print clusterSlots
     destroyConnection conn
     parseClusterSlots (head clusterSlots)
   else
@@ -120,6 +121,7 @@ parseClusterSlots _ = error "redis-simple: received invalid reply from redis ser
 parseNodes :: Reply -> IO (MasterNode IO.Handle)
 parseNodes (MultiBulk (Just ((Integer startSlot):(Integer endSlot):masterData:replicas)))= do
   master <- createNode (fromIntegral startSlot) (fromIntegral endSlot) masterData
+  -- Use dummy values for start and end slot for slaves 
   slaves <- mapM (createNode 0 0) replicas
   return $ MasterNode master (map SlaveNode slaves)
 parseNodes _ = error "redis-simple: received invalid reply from redis server"
@@ -131,11 +133,22 @@ createNode startSlot endSlot (MultiBulk (Just ((Bulk (Just host)):(Integer port)
   return $ Node pool nodeInfo
 createNode _ _ _ = error "redis-simple: received invalid reply from redis server"
 
+getMasterNode :: MasterNode IO.Handle -> ClusteredNode IO.Handle
+getMasterNode (MasterNode master _) = master
+isInRange :: Int -> MasterNode IO.Handle -> IO Bool
+isInRange n master = do
+  (startSlot, endSlot, _, _) <- readMVar $ nodeInfo (getMasterNode master)
+  return $ n >= startSlot && n <= endSlot
 runRedis :: Connection -> [[BS.ByteString]] -> IO [Reply]
 runRedis conn commands =
   case conn of
     Connection (NonClustered pool) ->
       Pool.withResource pool $ \handle -> sendRecv handle commands
-    Connection (Clustered _) ->
-      undefined
+    Connection (Clustered masters) -> do
+      -- FIXME: only meant to work for set commands atm
+      let key = head commands !! 2
+          hashslot = keyToSlot key
+      master <- filterM (isInRange (fromEnum hashslot)) masters
+      let pool = nodeConns $ getMasterNode (head master)
+      Pool.withResource pool $ \handle -> sendRecv handle commands
 

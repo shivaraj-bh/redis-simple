@@ -14,13 +14,13 @@ import Control.Concurrent.STM
       TQueue )
 import Control.Monad ( forever, replicateM, replicateM_, forM_, forM )
 import Data.Foldable (traverse_)
-import Database.Redis (connect, runRedis, defaultConnectInfo, Reply, Connection)
-import Data.Pool (Pool)
-import System.IO (Handle)
+import Database.Redis (connect, runRedis, defaultConnectInfo, Reply, Connection, ConnectInfo(..))
 import Data.ByteString (ByteString)
 import Control.Concurrent (forkIO, newEmptyMVar, putMVar, takeMVar, MVar)
 import System.CPUTime (getCPUTime)
 import Data.List.Split (chunksOf)
+import System.Random (newStdGen, Random (randomRs))
+import Data.ByteString.Char8 (pack)
 
 type RedisQuery = [ ByteString ]
 
@@ -58,10 +58,14 @@ data Config = Config
   , bufferSize :: Int
   }
 
+randomString :: Int -> IO ByteString
+randomString len = pack . take len . randomRs ('a', 'z') <$> newStdGen
+
 main :: IO ()
 main = do
   -- connection pool
-  conn <- connect defaultConnectInfo 
+  conn <- connect defaultConnectInfo
+  connCluster <- connect defaultConnectInfo{ connectPort = 30001, cluster = True }
   -- MVar to synchronize the client threads
   done <- newEmptyMVar
   -- Start the consumer thread
@@ -70,11 +74,12 @@ main = do
   _ <- async consumerAction
 
   -- Run the benchmarks
-  let !query = [ "SET", "key", "val" ]
   putStrLn "CPU time (with batching)"
-  benchmark (requests myConfig * clients myConfig) $ bufferTest done queryBuffer query
+  benchmark (requests myConfig * clients myConfig) $ bufferTest done queryBuffer
   putStrLn "CPU time (without batching)"
-  benchmark (requests myConfig * clients myConfig) $ withoutBufferTest done conn query
+  benchmark (requests myConfig * clients myConfig) $ withoutBufferTest done conn
+  putStrLn "CPU time (without batching) - Cluster"
+  benchmark (requests myConfig * clients myConfig) $ withoutBufferTest done connCluster
   where
   myConfig :: Config
   myConfig = Config
@@ -96,20 +101,24 @@ main = do
       replicateM_ (requests myConfig) $ runRedis conn [ query ]
       putMVar done ()
     replicateM_ (clients myConfig) $ takeMVar done
-  benchmark :: Int -> IO a -> IO ()
+  benchmark :: Int -> ([ByteString] -> IO a) -> IO ()
   benchmark requestsPerBatch action = do
-    let itrs = 1000
+    let itrs = 100000
     let batchSize = 100
     let batches = chunksOf batchSize [1::Int .. itrs]
     let warmupRuns = 5
 
     -- Warm-up
-    replicateM_ warmupRuns $ forM_ [1..batchSize] $ const action
+    replicateM_ warmupRuns $ forM_ [1..batchSize] $ const (action ["SET", "key", "val"])
 
     -- Actual runs 
     batchTimes <- forM batches $ \batch -> do
+      key <- randomString 10
+      -- Force evaluation of key
+      key `seq` return ()
+      let !query = [ "SET", key, "val" ]
       tick <- getCPUTime
-      forM_ batch $ const action
+      forM_ batch $ const (action query)
       tock <- getCPUTime
       let timeInUs = fromIntegral (tock - tick) / 1000000 :: Double
       return timeInUs

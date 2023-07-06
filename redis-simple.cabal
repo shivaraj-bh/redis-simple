@@ -10,6 +10,7 @@ library
   other-modules:
     , Database.Redis.Connection
     , Database.Redis.Protocol
+    , Database.Redis.HashSlot
   build-depends:
     , base
     , bytestring

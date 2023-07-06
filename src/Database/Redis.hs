@@ -3,7 +3,8 @@ module Database.Redis (
   connect,
   defaultConnectInfo,
   Connection,
-  Reply
+  Reply,
+  ConnectInfo(..)
 ) where
-import Database.Redis.Connection ( runRedis, connect, defaultConnectInfo, Connection)
+import Database.Redis.Connection ( runRedis, connect, defaultConnectInfo, Connection, ConnectInfo(..))
 import Database.Redis.Protocol (Reply)
