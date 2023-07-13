@@ -1,12 +1,14 @@
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
 {-# LANGUAGE OverloadedStrings #-}
-module Database.Redis.HashSlot(HashSlot, keyToSlot) where
+module Database.Redis.HashSlot(HashSlot, hashSlotForKeys) where
 
 import Data.Bits((.&.), xor, shiftL)
 import qualified Data.ByteString.Char8 as Char8
 import qualified Data.ByteString as BS
 import Data.Maybe (fromMaybe)
 import Data.Word(Word8, Word16)
+import Control.Exception (Exception, throwIO)
+import Data.List (nub)
 
 -- $setup
 -- >>> :set -XOverloadedStrings
@@ -15,6 +17,15 @@ newtype HashSlot = HashSlot Word16 deriving (Num, Eq, Ord, Real, Enum, Integral,
 
 numHashSlots :: Word16
 numHashSlots = 16384
+
+hashSlotForKeys :: Exception e => e -> [BS.ByteString] -> IO HashSlot
+hashSlotForKeys exception keys =
+    case nub (keyToSlot <$> keys) of
+        -- If none of the commands contain a key we can send them to any
+        -- node. Let's pick the first one.
+        [] -> return 0
+        [hashSlot] -> return hashSlot
+        _ -> throwIO exception
 
 -- | Compute the hashslot associated with a key
 --

@@ -11,6 +11,7 @@ library
     , Database.Redis.Connection
     , Database.Redis.Protocol
     , Database.Redis.HashSlot
+    , Database.Redis.Types
   build-depends:
     , base
     , bytestring
@@ -20,6 +21,8 @@ library
     , deepseq
     , scanner
     , text
+    , bytestring-lexing
+    , unordered-containers
 
   ghc-options: -Wall
   hs-source-dirs:   src
