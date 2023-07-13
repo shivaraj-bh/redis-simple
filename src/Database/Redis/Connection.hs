@@ -16,6 +16,7 @@ import Control.Monad (filterM)
 import Database.Redis.Types
 import qualified Data.HashMap.Strict as HM
 import Data.Char (toLower)
+import GHC.IO.Handle (hSetBinaryMode)
 
 
 sendRecv :: IO.Handle -> [[BS.ByteString]] -> IO [Reply]
@@ -24,7 +25,7 @@ sendRecv handle commands = do
   BS.hPut handle (BS.concat (map renderRequest commands))
   -- Read the response and parse
   resp <- BS.hGetSome handle 4096
-  parseReplies resp
+  parseReplies handle resp
 
 
 errConnClosed :: IO a
@@ -40,26 +41,29 @@ defaultConnectInfo = ConnInfo
   , cluster = False
   }
 
-parseReplies :: BS.ByteString -> IO [Reply]
-parseReplies = go
+parseReplies :: IO.Handle -> BS.ByteString -> IO [Reply]
+parseReplies handle = go
   where
     go "" = return []
     go rest = do
-      (r, rest') <- do
-        let scanResult = Scanner.scan reply rest
+      (parsed, remaining) <- do
+        scanResult <- Scanner.scanWith readMore reply rest
         case scanResult of
           Scanner.Fail {} -> errConnClosed
           Scanner.More {} -> error "redis-simple: received partial reply from redis server"
-          Scanner.Done rest' r -> return (r, rest')
-      rs <- go rest'
-      return (r : rs)
+          Scanner.Done remaining parsed -> return (parsed, remaining)
+      rs <- go remaining
+      return (parsed : rs)
+    readMore = BS.hGetSome handle 4096
 
 createConnection :: [Socket.AddrInfo] -> IO IO.Handle
 createConnection addrInfos = do
   s <- Socket.socket (Socket.addrFamily (head addrInfos)) Socket.Stream Socket.defaultProtocol
   Socket.connect s (Socket.addrAddress (head addrInfos))
   Socket.setSocketOption s Socket.KeepAlive 1
-  Socket.socketToHandle s IO.ReadWriteMode
+  handle <- Socket.socketToHandle s IO.ReadWriteMode
+  hSetBinaryMode handle True
+  return handle
 
 destroyConnection :: IO.Handle -> IO ()
 destroyConnection = IO.hClose
