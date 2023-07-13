@@ -1,0 +1,11 @@
+diff --git a/src/Database/Redis/Transactions.hs b/src/Database/Redis/Transactions.hs
+index fe2d33d..a93ddd0 100644
+--- a/src/Database/Redis/Transactions.hs
++++ b/src/Database/Redis/Transactions.hs
+@@ -41,7 +41,7 @@ instance RedisCtx RedisTx Queued where
+         -- future index in EXEC result list
+         i <- get
+         put (i+1)
+-        return $ Queued (decode . (!i))
++        return $ Queued (decode . (! i))
+ 

@@ -20,16 +20,33 @@
     },
     "haskell-flake": {
       "locked": {
-        "lastModified": 1687547380,
-        "narHash": "sha256-AHetxX1xCf87UcyExP3oJF5MDD7uVTsKD0SPGr9KEo8=",
+        "lastModified": 1689107492,
+        "narHash": "sha256-lmiJka/2cxlX6XtFQVbgqH95cf2VPbAsFdGwaH0j82M=",
         "owner": "srid",
         "repo": "haskell-flake",
-        "rev": "57cd5068787de5571cc6dd60431a0fa255d12a1f",
+        "rev": "815315c0c1ffb3d5c54d0868fb7f7fd6987d8cde",
         "type": "github"
       },
       "original": {
         "owner": "srid",
         "repo": "haskell-flake",
+        "type": "github"
+      }
+    },
+    "hedis": {
+      "flake": false,
+      "locked": {
+        "lastModified": 1672223380,
+        "narHash": "sha256-Jbc0YgzMjFRHDNvciTzVrj6s1kxd6ErlxcHxKkQu+2U=",
+        "owner": "juspay",
+        "repo": "hedis",
+        "rev": "f8b11e0512b864f165a4a086713b41a0e3d622ea",
+        "type": "github"
+      },
+      "original": {
+        "owner": "juspay",
+        "repo": "hedis",
+        "rev": "f8b11e0512b864f165a4a086713b41a0e3d622ea",
         "type": "github"
       }
     },
@@ -71,6 +88,7 @@
       "inputs": {
         "flake-parts": "flake-parts",
         "haskell-flake": "haskell-flake",
+        "hedis": "hedis",
         "nixpkgs": "nixpkgs"
       }
     }

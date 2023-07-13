@@ -44,3 +44,20 @@ executable redis-batching-bench
   hs-source-dirs:   app
   ghc-options:      -Wall -O2 -rtsopts
   default-language: Haskell2010
+
+benchmark redis-simple-benchmark
+  main-is: benchmark/Bench.hs
+  type: exitcode-stdio-1.0
+  build-depends:
+    , base
+    , hedis
+    , time
+    , redis-simple
+    , bytestring
+    , split
+    , random
+  mixins:
+    , redis-simple (Database.Redis as Redis_simple.Database.Redis)
+    , hedis (Database.Redis as Hedis.Database.Redis)
+  ghc-options: -O2 -Wall -rtsopts
+  default-language: Haskell2010
